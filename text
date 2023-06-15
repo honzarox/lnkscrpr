@@ -1,0 +1,37 @@
+Just finished this, maybe will be useful for some: https://github.com/cwwmbm/linkedinscraper.
+
+What is it? Python script scraping LinkedIn for jobs and stores them into database. config.json is where all the setup and parameters are being set. There's also a web interface to launch on local machine so you can browse them. Screenshot: https://github.com/cwwmbm/linkedinscraper/blob/main/screenshot/screenshot.png
+
+Why is it? Because LinkedIn is the worst website in the world and the less I go there the lower my blood pressure will be. Everything about it is annoying. Everything. Also, I needed a project.
+
+Important notes:
+
+It scrapes jobs synchronously, so it takes a bit of time. I couldn't make asynchronous sync work; tried several libraries and for all LinkedIn refused connection. First launch is the longest because the database is empty, so it'll scrape everything it finds (within the parameters you set). I did 10 queries, it took about 15 minutes. All subsequent launches will be much quicker because it won't scrape jobs that are already in the database.
+
+It's in the readme but it bears repeating: if you are using this application, please be aware that LinkedIn does not allow scraping of its website. Use this application at your own risk. It's recommended to use proxy servers to avoid getting blocked by LinkedIn. If you do not use proxy it's extremely likely your IP will be blocked very quickly. I use paid residential proxies to do this. It costs less than a coffee for a lot of mileage.
+
+What
+
+FAQ:
+
+Why is web interface so basic? Your mom is basic. But also, I never ever programmed web interface in my life. This is the first time I created html file. If you think you can do better please be my guest.
+
+I tried to run it and it shows an error, can you please help me? Use ChatGPT to help you debug. If I could make it write web interface for this you can make it debug it for you. I believe in you.
+
+What problem this addresses, specifically?
+
+LinkedIn can't just show recent jobs, they will be peppered with sponsored postings.
+
+LinkedIn makes decisions what's relevant to you and what not based on internal algorithm written by someone who hates humanity
+
+LinkedIn will show you same jobs that you saw for months without showing you anything new
+
+LinkedIn will show you jobs completely irrelevant to you that only have in common one common word in the description.
+
+My current job recommendations on LinkedIn are: a 6 month old job, a construction job (I'm in software), a job in Phoenix, AZ (I'm in Canada), and two software jobs that have nothing to do with me at all.
+
+Last week I was shown a job for the first time - it was two weeks old, it was very relevant to me, and it was 2 weeks too late to do anything about because they had over 200 applicants and stopped taking applications. I had similar experiences almost every month.
+
+I use IPRoyal residential proxies. They are doing proxy rotation for you so I didn't need to worry about rotating them with code.
+
+
