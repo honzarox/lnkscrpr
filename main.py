@@ -3,11 +3,13 @@ import json
 import sqlite3
 from sqlite3 import Error
 from bs4 import BeautifulSoup
-import time
+import time as tm
 from itertools import groupby
-from datetime import datetime
+from datetime import datetime, timedelta, time
 import pandas as pd
 from urllib.parse import quote
+from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
 
 
 def load_config(file_name):
@@ -26,7 +28,7 @@ def get_with_retry(url, config, retries=3, delay=1):
             return BeautifulSoup(r.content, 'html.parser')
         except requests.exceptions.Timeout:
             print(f"Timeout occurred for URL: {url}, retrying in {delay}s...")
-            time.sleep(delay)
+            tm.sleep(delay)
         except Exception as e:
             print(f"An error occurred while retrieving the URL: {url}, error: {e}")
     return None
@@ -60,7 +62,9 @@ def transform(soup):
             'job_url': job_url,
             'job_description': job_description,
             'applied': 0,
-            'hidden': 0
+            'hidden': 0,
+            'interview': 0,
+            'rejected': 0
         }
         joblist.append(job)
     return joblist
@@ -86,17 +90,19 @@ def transform_job(soup):
     else:
         return "Could not find Job Description"
 
-def remove_irrelevant_jobs(joblist, config):
-    # Removes irrelevant jobs from the list. Irrelevant is defined as:
-    # 1. Having any of the words in the config['desc_words'] list in the job description.
-    # 2. If config['title_include'] is False, then exclude jobs that have any of the words in the config['title_words'] list in the title.
-    # 3. If config['title_include'] is True, then include only jobs that have any of the words in the config['title_words'] list in the title.
+def safe_detect(text):
+    try:
+        return detect(text)
+    except LangDetectException:
+        return 'en'
 
+def remove_irrelevant_jobs(joblist, config):
+    #Filter out jobs based on description, title, and language. Set up in config.json.
     new_joblist = [job for job in joblist if not any(word.lower() in job['job_description'].lower() for word in config['desc_words'])]   
-    if not config['title_include']:
-        new_joblist = [job for job in new_joblist if not any(word.lower() in job['title'].lower() for word in config['title_words'])]
-    else:
-        new_joblist = [job for job in new_joblist if any(word.lower() in job['title'].lower() for word in config['title_words'])]
+    new_joblist = [job for job in new_joblist if not any(word.lower() in job['title'].lower() for word in config['title_exclude'])] if len(config['title_exclude']) > 0 else new_joblist
+    new_joblist = [job for job in new_joblist if any(word.lower() in job['title'].lower() for word in config['title_include'])] if len(config['title_include']) > 0 else new_joblist
+    new_joblist = [job for job in new_joblist if safe_detect(job['job_description']) in config['languages']] if len(config['languages']) > 0 else new_joblist
+
     return new_joblist
 
 def remove_duplicates(joblist, config):
@@ -213,20 +219,23 @@ def job_exists(df, job):
     # Check if the job already exists in the dataframe
     if df.empty:
         return False
-    return ((df['title'] == job['title']) & (df['company'] == job['company']) & (df['date'] == job['date'])).any()
+    #return ((df['title'] == job['title']) & (df['company'] == job['company']) & (df['date'] == job['date'])).any()
+    #The job exists if there's already a job in the database that has the same URL
+    return ((df['job_url'] == job['job_url']).any() | (((df['title'] == job['title']) & (df['company'] == job['company']) & (df['date'] == job['date'])).any()))
 
 def get_jobcards(config):
     #Function to get the job cards from the search results page
     all_jobs = []
-    for query in config['search_queries']:
-        keywords = quote(query['keywords']) # URL encode the keywords
-        location = quote(query['location']) # URL encode the location
-        for i in range (0, config['pages_to_scrape']):
-            url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
-            soup = get_with_retry(url, config)
-            jobs = transform(soup)
-            all_jobs = all_jobs + jobs
-            print("Finished scraping page: ", url)
+    for k in range(0, config['rounds']):
+        for query in config['search_queries']:
+            keywords = quote(query['keywords']) # URL encode the keywords
+            location = quote(query['location']) # URL encode the location
+            for i in range (0, config['pages_to_scrape']):
+                url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
+                soup = get_with_retry(url, config)
+                jobs = transform(soup)
+                all_jobs = all_jobs + jobs
+                print("Finished scraping page: ", url)
     print ("Total job cards scraped: ", len(all_jobs))
     all_jobs = remove_duplicates(all_jobs, config)
     print ("Total job cards after removing duplicates: ", len(all_jobs))
@@ -252,7 +261,7 @@ def find_new_jobs(all_jobs, conn, config):
     return new_joblist
 
 def main():
-    start_time = time.perf_counter()
+    start_time = tm.perf_counter()
     job_list = []
 
     config = load_config('config.json')
@@ -269,9 +278,17 @@ def main():
 
         for job in all_jobs:
             job_date = convert_date_format(job['date'])
+            job_date = datetime.combine(job_date, time())
+            #if job is older than a week, skip it
+            if job_date < datetime.now() - timedelta(days=config['days_to_scrape']):
+                continue
             print('Found new job: ', job['title'], 'at ', job['company'], job['job_url'])
             desc_soup = get_with_retry(job['job_url'], config)
             job['job_description'] = transform_job(desc_soup)
+            language = safe_detect(job['job_description'])
+            if language not in config['languages']:
+                print('Job description language not supported: ', language)
+                #continue
             job_list.append(job)
         #Final check - removing jobs based on job description keywords words from the config file
         jobs_to_add = remove_irrelevant_jobs(job_list, config)
@@ -283,8 +300,7 @@ def main():
         df['date_loaded'] = datetime.now()
         df_filtered['date_loaded'] = datetime.now()
         df['date_loaded'] = df['date_loaded'].astype(str)
-        df_filtered['date_loaded'] = df_filtered['date_loaded'].astype(str)
-
+        df_filtered['date_loaded'] = df_filtered['date_loaded'].astype(str)        
         
         if conn is not None:
             #Update or Create the database table for the job list
@@ -306,7 +322,7 @@ def main():
     else:
         print("No jobs found")
     
-    end_time = time.perf_counter()
+    end_time = tm.perf_counter()
     print(f"Scraping finished in {end_time - start_time:.2f} seconds")
 
 
